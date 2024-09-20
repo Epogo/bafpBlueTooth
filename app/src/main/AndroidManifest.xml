@@ -26,6 +26,12 @@
             </intent-filter>
         </activity>
         <activity android:name=".DeviceListActivity" />
+
+        <service
+            android:name=".BluetoothService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false"/>
+
     </application>
 
     <!-- Required Permissions -->
@@ -34,5 +40,6 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
 </manifest>
