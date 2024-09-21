@@ -103,17 +103,20 @@ public class MainActivity extends AppCompatActivity {
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    "CHANNEL_ID",
-                    "Bluetooth Service Channel",
-                    NotificationManager.IMPORTANCE_DEFAULT
-            );
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
+            String channelId = "DISCONNECT_CHANNEL_ID";
+            CharSequence channelName = "Bluetooth Disconnection Alerts";
+            String description = "Alerts when a Bluetooth device is disconnected";
+            int importance = NotificationManager.IMPORTANCE_HIGH;
+            NotificationChannel channel = new NotificationChannel(channelId, channelName, importance);
+            channel.setDescription(description);
+
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.createNotificationChannel(channel);
             }
         }
     }
+
 
     private void initializeViews() {
         connectionStatusTextView = findViewById(R.id.connection_status);
@@ -413,7 +416,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void disconnectDevice() {
         if (bluetoothSocket != null) {
             try {
@@ -423,7 +425,13 @@ public class MainActivity extends AppCompatActivity {
             }
             bluetoothSocket = null;
             connectedDevice = null;
-            runOnUiThread(() -> connectionStatusTextView.setText("Connected Device: N/A"));
+
+            runOnUiThread(() -> {
+                connectionStatusTextView.setText("Connected Device: N/A");
+                // Show alert when device is disconnected
+                AlertManager alertManager = new AlertManager(MainActivity.this);
+                alertManager.showAlert("The Bluetooth device has been disconnected.");
+            });
         }
     }
 
@@ -468,13 +476,26 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+
+        // Unregister bluetoothReceiver only if it was registered
         if (isReceiverRegistered) {
             unregisterReceiver(bluetoothReceiver);
             isReceiverRegistered = false;
         }
 
-        unregisterReceiver(receiver);
-        unregisterReceiver(bondStateReceiver);
+        // Unregister receiver and bondStateReceiver only if they were registered
+        try {
+            unregisterReceiver(receiver);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Receiver not registered: " + e.getMessage());
+        }
+
+        try {
+            unregisterReceiver(bondStateReceiver);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Bond state receiver not registered: " + e.getMessage());
+        }
+
         disconnectDevice();
 
         // Optionally clear the last connected device
