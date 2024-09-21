@@ -68,6 +68,7 @@ public class MainActivity extends AppCompatActivity {
 
     private Toolbar toolbar;
 
+    private boolean isConnecting = false; // Track connection attempts
     private boolean alertShown = false; // Flag to control alert display
     private BroadcastReceiver backgroundToggleReceiver = new BroadcastReceiver() {
         @Override
@@ -404,21 +405,18 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-
     private void connectToPairedDevice(BluetoothDevice device) {
         new Thread(() -> {
             try {
                 // Check for Bluetooth permissions based on Android version
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                        // Permission not granted; handle this case
                         Log.w(TAG, "BLUETOOTH_CONNECT permission is not granted. Cannot connect to device.");
                         return;
                     }
                 } else {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH) != PackageManager.PERMISSION_GRANTED ||
                             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED) {
-                        // Permission not granted; handle this case
                         Log.w(TAG, "BLUETOOTH or BLUETOOTH_ADMIN permission is not granted. Cannot connect to device.");
                         return;
                     }
@@ -431,18 +429,24 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     String connectedDeviceName = connectedDevice.getName();
                     connectionStatusTextView.setText("Connected Device: " + connectedDeviceName);
-
+                    alertShown = false;
                     // Save the last connected device's address
                     getSharedPreferences("BluetoothPrefs", MODE_PRIVATE)
                             .edit()
                             .putString(LAST_CONNECTED_DEVICE, connectedDevice.getAddress())
                             .apply();
+
+                    // Reset the connection attempt flag
+                    isConnecting = false;
                 });
 
             } catch (IOException e) {
                 Log.e(TAG, "Error connecting to device", e);
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed to connect to device", Toast.LENGTH_SHORT).show());
                 disconnectDevice();
+
+                // Reset the connection attempt flag
+                isConnecting = false;
             }
         }).start();
     }
@@ -527,11 +531,17 @@ public class MainActivity extends AppCompatActivity {
 
             // Check if the device is bonded
             if (lastDevice != null && lastDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
-                // Attempt to connect to the last device to see if it's in range
-                connectToPairedDevice(lastDevice);
+                // Check if a connection attempt is already in progress
+                if (!isConnecting) {
+                    isConnecting = true; // Set flag to indicate connection attempt
+
+                    // Attempt to connect to the last device
+                    connectToPairedDevice(lastDevice);
+                }
             }
         }
     }
+
 
     private void reconnectToLastConnectedDevice() {
         // Retrieve the last connected device address
