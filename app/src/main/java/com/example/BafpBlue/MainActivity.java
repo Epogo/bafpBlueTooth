@@ -11,23 +11,29 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
+import android.view.MenuInflater;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.appcompat.widget.Toolbar;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -60,10 +66,46 @@ public class MainActivity extends AppCompatActivity {
     private Handler connectionCheckHandler;
     private Runnable connectionCheckRunnable;
 
+    private Toolbar toolbar;
+
+    private boolean alertShown = false; // Flag to control alert display
+    private BroadcastReceiver backgroundToggleReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            boolean isRunningInBackground = intent.getBooleanExtra("isRunningInBackground", false);
+            if (isRunningInBackground) {
+                // Start the BluetoothService
+                Intent serviceIntent = new Intent(MainActivity.this, BluetoothService.class);
+                ContextCompat.startForegroundService(MainActivity.this, serviceIntent);
+            } else {
+                // Stop the BluetoothService
+                Intent serviceIntent = new Intent(MainActivity.this, BluetoothService.class);
+                stopService(serviceIntent);
+            }
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+
+        // Remove the default title in the action bar
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayShowTitleEnabled(false);
+        }
+
+        // Set up your custom TextView title
+        TextView toolbarTitle = findViewById(R.id.toolbar_title);
+        toolbarTitle.setText("BafpBlue");
+
+        toolbar.setOnClickListener(this::showPopupMenu);
+
+        // Check if the app should run in the background
+        SharedPreferences sharedPreferences = getSharedPreferences("AppPrefs", MODE_PRIVATE);
+        boolean isRunningInBackground = sharedPreferences.getBoolean("RUNNING_IN_BACKGROUND", false);
 
         initializeViews();
 
@@ -81,10 +123,11 @@ public class MainActivity extends AppCompatActivity {
         };
 
         checkBluetoothPermissionsAndInitialize();
-
-        // Start the BluetoothService
-        Intent serviceIntent = new Intent(this, BluetoothService.class);
-        ContextCompat.startForegroundService(this, serviceIntent);
+        if (isRunningInBackground) {
+            // Start the BluetoothService
+            Intent serviceIntent = new Intent(this, BluetoothService.class);
+            ContextCompat.startForegroundService(this, serviceIntent);
+        }
 
         // Create Notification Channel for Android 8.0 and above
         createNotificationChannel();
@@ -99,7 +142,30 @@ public class MainActivity extends AppCompatActivity {
         };
         registerReceiver(bluetoothReceiver, filter);
         isReceiverRegistered = true; // Set flag to indicate receiver is registered
+
+        // Register the receiver
+        LocalBroadcastManager.getInstance(this).registerReceiver(backgroundToggleReceiver,
+                new IntentFilter("BackgroundServiceToggle"));
     }
+
+    private void showPopupMenu(View view) {
+        PopupMenu popup = new PopupMenu(this, view);
+        MenuInflater inflater = popup.getMenuInflater();
+        inflater.inflate(R.menu.popup_menu, popup.getMenu());
+
+        popup.setOnMenuItemClickListener(item -> {
+            int itemId = item.getItemId();
+            if (itemId == R.id.settings) {
+                startActivity(new Intent(MainActivity.this, SettingsActivity.class));
+                return true;
+            }
+            // Add other cases for more menu items if needed
+            return false;
+        });
+
+        popup.show();
+    }
+
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -407,10 +473,9 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             // Send a small data to check if the connection is still active
-            bluetoothSocket.getOutputStream().write(0); // Example command, replace with a real one if needed
+            bluetoothSocket.getOutputStream().write(0); // Example command
             runOnUiThread(() -> connectionStatusTextView.setText("Connected Device: " + connectedDevice.getName()));
         } catch (IOException e) {
-            // If sending data fails, assume the connection is lost
             runOnUiThread(() -> connectionStatusTextView.setText("Connected Device: N/A"));
             Log.e(TAG, "Connection check failed", e);
             disconnectDevice();
@@ -429,32 +494,43 @@ public class MainActivity extends AppCompatActivity {
 
             runOnUiThread(() -> {
                 connectionStatusTextView.setText("Connected Device: N/A");
-                // Show alert when device is disconnected
-                AlertManager alertManager = new AlertManager(MainActivity.this);
-                alertManager.showAlert("The Bluetooth device has been disconnected.");
+                // Show alert only if it hasn't been shown yet
+                if (!alertShown) {
+                    AlertManager alertManager = new AlertManager(MainActivity.this);
+                    alertManager.showAlert("The Bluetooth device has been disconnected.");
+                    alertShown = true; // Set the flag to true to prevent future alerts
+                }
 
-                // Start scanning for devices periodically
-                startDeviceScan();
+                // Check if the last connected device is in the vicinity
+                checkLastConnectedDeviceInVicinity();
             });
         }
     }
 
-    private void startDeviceScan() {
-        // Check for Bluetooth permissions before starting discovery
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                return;
+    private void checkLastConnectedDeviceInVicinity() {
+        String lastDeviceAddress = getSharedPreferences("BluetoothPrefs", MODE_PRIVATE)
+                .getString(LAST_CONNECTED_DEVICE, null);
+
+        if (lastDeviceAddress != null) {
+            BluetoothDevice lastDevice = bluetoothAdapter.getRemoteDevice(lastDeviceAddress);
+
+            // Check for Bluetooth permissions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    // Request the permission if not granted
+                    ActivityCompat.requestPermissions(this, new String[]{
+                            Manifest.permission.BLUETOOTH_CONNECT
+                    }, REQUEST_BLUETOOTH_PERMISSIONS);
+                    return; // Exit the method until permission is granted
+                }
+            }
+
+            // Check if the device is bonded
+            if (lastDevice != null && lastDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
+                // Attempt to connect to the last device to see if it's in range
+                connectToPairedDevice(lastDevice);
             }
         }
-
-        // Start scanning for devices every 30 seconds
-        connectionCheckHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                scanForDevices();  // Call your scan method
-                connectionCheckHandler.postDelayed(this, 30000); // Repeat every 30 seconds
-            }
-        }, 30000); // Initial delay
     }
 
     private void reconnectToLastConnectedDevice() {
@@ -567,6 +643,9 @@ public class MainActivity extends AppCompatActivity {
         if (connectionCheckHandler != null) {
             connectionCheckHandler.removeCallbacks(connectionCheckRunnable);
         }
+
+        // Unregister the receiver
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(backgroundToggleReceiver);
     }
 
 
