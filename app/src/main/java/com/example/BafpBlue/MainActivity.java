@@ -385,6 +385,7 @@ public class MainActivity extends AppCompatActivity {
     private void checkConnectionStatus() {
         if (connectedDevice == null || bluetoothSocket == null) {
             runOnUiThread(() -> connectionStatusTextView.setText("Connected Device: N/A"));
+            reconnectToLastConnectedDevice();
             return;
         }
 
@@ -431,9 +432,68 @@ public class MainActivity extends AppCompatActivity {
                 // Show alert when device is disconnected
                 AlertManager alertManager = new AlertManager(MainActivity.this);
                 alertManager.showAlert("The Bluetooth device has been disconnected.");
+
+                // Start scanning for devices periodically
+                startDeviceScan();
             });
         }
     }
+
+    private void startDeviceScan() {
+        // Check for Bluetooth permissions before starting discovery
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+        }
+
+        // Start scanning for devices every 30 seconds
+        connectionCheckHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                scanForDevices();  // Call your scan method
+                connectionCheckHandler.postDelayed(this, 30000); // Repeat every 30 seconds
+            }
+        }, 30000); // Initial delay
+    }
+
+    private void reconnectToLastConnectedDevice() {
+        // Retrieve the last connected device address
+        String lastDeviceAddress = getSharedPreferences("BluetoothPrefs", MODE_PRIVATE)
+                .getString(LAST_CONNECTED_DEVICE, null);
+
+        if (lastDeviceAddress != null) {
+            BluetoothDevice lastDevice = bluetoothAdapter.getRemoteDevice(lastDeviceAddress);
+
+            // Check if we have the required Bluetooth permissions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    // Handle permission request for Android 12 and above
+                    ActivityCompat.requestPermissions(this, new String[]{
+                            Manifest.permission.BLUETOOTH_CONNECT
+                    }, REQUEST_BLUETOOTH_PERMISSIONS);
+                    return;
+                }
+            } else {
+                // For Android 11 and below, check for BLUETOOTH and BLUETOOTH_ADMIN permissions
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH) != PackageManager.PERMISSION_GRANTED ||
+                        ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED) {
+                    // Handle permission request for Android 11 and below
+                    ActivityCompat.requestPermissions(this, new String[]{
+                            Manifest.permission.BLUETOOTH,
+                            Manifest.permission.BLUETOOTH_ADMIN
+                    }, REQUEST_BLUETOOTH_PERMISSIONS);
+                    return;
+                }
+            }
+
+            if (lastDevice != null && lastDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
+                connectToPairedDevice(lastDevice);
+            }
+        }
+    }
+
+
 
     @Override
     protected void onResume() {
